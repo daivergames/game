@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Baby Khim: Egg Chase</title>
+<style>
+  :root{
+    --ui-bg: rgba(255,255,255,0.8);
+    --pink: #ff3d8e;
+    --gold: #ffda6b;
+    --ink: #161616;
+  }
+  html, body {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    overflow: hidden;
+    font-family: ui-rounded, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
+    background: radial-gradient(1200px 800px at 70% 10%, #fde3ef 0%, #ffe9c7 40%, #ffe3f6 60%, #ffe7d0 75%, #ffd4ea 100%);
+  }
+  canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+    background: linear-gradient(180deg, rgba(255,255,255,0.35), rgba(255,255,255,0.2)),
+                repeating-linear-gradient(0deg, rgba(255,255,255,0.15) 0 8px, rgba(0,0,0,0.02) 8px 16px);
+    image-rendering: pixelated;
+  }
+  #hud {
+    position: fixed;
+    top: 12px; left: 12px; right: 12px;
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    justify-content: space-between;
+    pointer-events: none;
+  }
+  .chip {
+    pointer-events: auto;
+    background: var(--ui-bg);
+    border: 2px solid #00000018;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.12), inset 0 1px 0 #fff;
+    padding: 10px 14px;
+    border-radius: 14px;
+    display: inline-flex;
+    gap: 10px;
+    align-items: center;
+    backdrop-filter: blur(6px);
+  }
+  #eatButton {
+    pointer-events: auto;
+    padding: 14px 18px;
+    font-size: 1.2rem;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    color: white;
+    background: linear-gradient(180deg, #ff5ab3, #e50078);
+    border: none;
+    border-radius: 14px;
+    box-shadow: 0 8px 20px rgba(229,0,120,0.35), inset 0 1px 0 rgba(255,255,255,0.5);
+    transform: translateZ(0);
+  }
+  #eatButton:active { transform: translateY(1px); }
+  .stat { font-weight: 700; }
+  .egg-icon {
+    width: 18px; height: 22px; display: inline-block;
+    background: radial-gradient(#fff, #ffe6a0);
+    border-radius: 50% 50% 45% 45% / 60% 60% 40% 40%;
+    border: 2px solid #00000022;
+  }
+  #tip { position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); opacity: 0.7; font-size: 0.95rem; }
+</style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="hud">
+    <div class="chip" id="stats">
+      <span class="egg-icon"></span>
+      <span class="stat">Bag: <b id="bag">0</b></span>
+      <span style="opacity:.5">•</span>
+      <span class="stat">Eaten: <b id="eaten">0</b></span>
+    </div>
+    <div class="chip">
+      <button id="eatButton">EAT 🥚</button>
+    </div>
+  </div>
+  <div id="tip" class="chip">Tap / drag to move Baby Khim • Eggs run away • Collect first, then EAT</div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W = canvas.width = window.innerWidth;
+let H = canvas.height = window.innerHeight;
+ctx.imageSmoothingEnabled = false;
+
+// -------- PIXEL ART SPRITE (16x16) — 2-frame walk cycle --------
+// Palette: 0=transparent, 1=hair(#111), 2=skin(#a56b46), 3=dress(#ff3d8e), 4=shadow(#6b3d25), 5=highlight(#ffd1e6), 6=shoe(#402a1f), 7=cheek(#d47b6a)
+const PAL = [
+  null, '#111111', '#a56b46', '#ff3d8e', '#6b3d25', '#ffd1e6', '#402a1f', '#d47b6a'
+];
+
+// Helper to build a blank 16x16
+const blank = () => Array.from({length:16}, ()=>Array(16).fill(0));
+
+// Base pose (frame 0)
+const f0 = blank();
+// hair cap
+for(let x=4;x<=11;x++){ f0[2][x]=1; }
+f0[3][3]=1; for(let x=4;x<=12;x++){ f0[3][x]=1; } f0[3][13]=1;
+// face
+for(let y=4;y<=8;y++){ for(let x=4;x<=11;x++){ f0[y][x]=2; }}
+// eyes
+f0[6][6]=1; f0[6][9]=1; // pupils
+// cheeks
+f0[7][5]=7; f0[7][10]=7;
+// hair side
+f0[5][3]=1; f0[6][3]=1; f0[5][12]=1; f0[6][12]=1;
+// neck
+f0[9][7]=2; f0[9][8]=2;
+// dress top
+for(let x=5;x<=10;x++){ f0[10][x]=3; }
+for(let x=4;x<=11;x++){ f0[11][x]=3; }
+// arms (skin)
+f0[11][3]=2; f0[12][3]=2; // left arm down
+f0[11][12]=2; f0[12][12]=2; // right arm down
+// skirt
+for(let x=3;x<=12;x++){ f0[12][x]=3; }
+for(let x=2;x<=13;x++){ f0[13][x]=3; }
+// shoes
+f0[15][6]=6; f0[15][9]=6;
+// legs (skin)
+f0[14][6]=2; f0[14][9]=2;
+
+// Frame 1: swinging legs/arms
+const f1 = JSON.parse(JSON.stringify(f0));
+// raise left arm
+f1[11][3]=0; f1[12][3]=0; f1[10][3]=2;
+// lower right arm a bit
+f1[12][12]=2; f1[13][12]=2;
+// legs alternate
+f1[14][6]=0; f1[15][6]=0; f1[14][5]=2; f1[15][5]=6; // left forward
+f1[14][9]=0; f1[15][9]=0; f1[14][10]=2; f1[15][10]=6; // right back
+
+const frames = [f0, f1];
+
+function drawPixelGirl(x, y, scale=5, frameIndex=0, flip=false){
+  const frame = frames[frameIndex % frames.length];
+  const px = flip ? -1 : 1;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(px*scale, scale);
+  ctx.translate(-8, -8); // center 16x16
+  for(let iy=0; iy<16; iy++){
+    for(let ix=0; ix<16; ix++){
+      const c = PAL[frame[iy][ix]];
+      if(!c) continue;
+      ctx.fillStyle = c;
+      ctx.fillRect(ix, iy, 1, 1);
+    }
+  }
+  ctx.restore();
+}
+
+// -------- GAME STATE --------
+const girl = {
+  x: W*0.5,
+  y: H*0.6,
+  size: 16*5, // 16px sprite * scale
+  speed: 6,
+  vx: 0, vy: 0,
+  target: {x: W*0.5, y: H*0.6},
+  anim: {t:0, frame:0, flip:false}
+};
+
+let eggs = [];
+let bag = 0;
+let eaten = 0;
+const uiBag = document.getElementById('bag');
+const uiEaten = document.getElementById('eaten');
+
+function spawnEgg(){
+  const margin = 40;
+  const e = {
+    x: Math.random()*(W-2*margin)+margin,
+    y: Math.random()*(H-2*margin)+margin,
+    r: 16,
+    vx: 0, vy: 0,
+    wobble: Math.random()*Math.PI*2
+  };
+  eggs.push(e);
+}
+
+// Particle sparkle for style
+const particles = [];
+function poof(x,y){
+  for(let i=0;i<6;i++){
+    particles.push({x,y, vx:(Math.random()-0.5)*2, vy:(Math.random()-0.5)*2-1, life: 30});
+  }
+}
+
+function drawParticles(){
+  particles.forEach(p=>{
+    ctx.globalAlpha = p.life/30;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(p.x, p.y, 2, 2);
+    ctx.globalAlpha = 1;
+    p.x += p.vx; p.y += p.vy; p.vy += 0.03; p.life--;
+  });
+  for(let i=particles.length-1;i>=0;i--){ if(particles[i].life<=0) particles.splice(i,1); }
+}
+
+function moveEggs(){
+  eggs.forEach(e=>{
+    // Eggs flee from girl; slight sinus wobble for personality
+    const dx = e.x - girl.x; const dy = e.y - girl.y; const d = Math.hypot(dx,dy) || 1;
+    const fear = Math.max(0, 220 - d) / 220; // 0..1 when close
+    const flee = 3 * fear;
+    e.vx += (dx/d)*flee + Math.cos(e.wobble)*0.2;
+    e.vy += (dy/d)*flee + Math.sin(e.wobble)*0.2;
+    e.wobble += 0.05;
+    // dampen and move
+    e.vx *= 0.95; e.vy *= 0.95; e.x += e.vx; e.y += e.vy;
+    // bounce walls
+    if(e.x < e.r){ e.x = e.r; e.vx *= -0.8; }
+    if(e.y < e.r){ e.y = e.r; e.vy *= -0.8; }
+    if(e.x > W-e.r){ e.x = W-e.r; e.vx *= -0.8; }
+    if(e.y > H-e.r){ e.y = H-e.r; e.vy *= -0.8; }
+  });
+}
+
+function collectOverlap(){
+  // Collect eggs into bag (DO NOT EAT) when touching
+  for(let i=eggs.length-1; i>=0; i--){
+    const e = eggs[i];
+    const dx = e.x - girl.x; const dy = e.y - girl.y;
+    if(Math.hypot(dx,dy) < (girl.size*0.35 + e.r)){
+      eggs.splice(i,1); bag++; uiBag.textContent = bag; poof(e.x, e.y);
+    }
+  }
+}
+
+function drawEgg(e){
+  // Pixel-ish egg with outline and tiny face
+  ctx.save();
+  ctx.translate(e.x, e.y);
+  ctx.scale(1,1.2);
+  ctx.beginPath();
+  ctx.ellipse(0,0, e.r*0.8, e.r*0.95, 0, 0, Math.PI*2);
+  ctx.fillStyle = '#fff6cf';
+  ctx.fill();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+  ctx.stroke();
+  ctx.scale(1, 1/1.2);
+  // face
+  ctx.fillStyle = '#3a2c18';
+  ctx.fillRect(-4, -2, 3, 3);
+  ctx.fillRect(2, -2, 3, 3);
+  ctx.fillRect(-1, 2, 2, 2);
+  ctx.restore();
+}
+
+function drawEggs(){ eggs.forEach(drawEgg); }
+
+function drawGirl(){
+  const moving = Math.hypot(girl.vx, girl.vy) > 0.1;
+  girl.anim.t += moving ? 1 : 0.5;
+  girl.anim.frame = Math.floor(girl.anim.t/6) % 2;
+  drawPixelGirl(girl.x, girl.y, Math.round(girl.size/16), girl.anim.frame, girl.anim.flip);
+}
+
+function updateGirl(){
+  // Move toward target smoothly
+  const dx = girl.target.x - girl.x;
+  const dy = girl.target.y - girl.y;
+  const dist = Math.hypot(dx,dy);
+  if(dist > 1){
+    const step = Math.min(girl.speed, dist);
+    girl.vx = (dx/dist) * step;
+    girl.vy = (dy/dist) * step;
+    girl.anim.flip = girl.vx < 0;
+    girl.x += girl.vx;
+    girl.y += girl.vy;
+  } else {
+    girl.vx = girl.vy = 0;
+  }
+  // clamp
+  girl.x = Math.max(16, Math.min(W-16, girl.x));
+  girl.y = Math.max(16, Math.min(H-16, girl.y));
+}
+
+// Input (tap & drag)
+function setTargetFromEvent(e){
+  const t = e.touches ? e.touches[0] : e;
+  girl.target.x = t.clientX; girl.target.y = t.clientY;
+  e.preventDefault();
+}
+canvas.addEventListener('mousedown', setTargetFromEvent);
+canvas.addEventListener('mousemove', (e)=>{ if(e.buttons===1) setTargetFromEvent(e); });
+canvas.addEventListener('touchstart', setTargetFromEvent, {passive:false});
+canvas.addEventListener('touchmove', setTargetFromEvent, {passive:false});
+
+// Eat button
+const eatBtn = document.getElementById('eatButton');
+eatBtn.addEventListener('click', ()=>{
+  if(bag>0){
+    eaten += bag; bag = 0; uiBag.textContent = bag; uiEaten.textContent = eaten;
+    // floating yum text
+    floaters.push({x: girl.x, y: girl.y-50, text: 'YUM! +' + eaten, life: 50});
+  }
+});
+
+// Floating texts
+const floaters = [];
+function drawFloaters(){
+  for(let i=floaters.length-1; i>=0; i--){
+    const f = floaters[i];
+    ctx.globalAlpha = Math.max(0, f.life/50);
+    ctx.font = 'bold 22px monospace';
+    ctx.fillStyle = '#111';
+    ctx.fillText(f.text, f.x-40, f.y);
+    ctx.globalAlpha = 1;
+    f.y -= 0.6; f.life--;
+    if(f.life<=0) floaters.splice(i,1);
+  }
+}
+
+function drawSceneDecor(){
+  // ground dots
+  ctx.save();
+  ctx.globalAlpha = 0.08;
+  for(let i=0;i<50;i++){
+    const x = (i*97)%W; const y = (i*53)%H;
+    ctx.beginPath();
+    ctx.arc(x, y, 2, 0, Math.PI*2);
+    ctx.fillStyle = '#000';
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  drawSceneDecor();
+  moveEggs();
+  updateGirl();
+  collectOverlap();
+  drawEggs();
+  drawGirl();
+  drawParticles();
+  drawFloaters();
+  requestAnimationFrame(loop);
+}
+
+// Spawn logic
+for(let i=0;i<6;i++) spawnEgg();
+setInterval(()=>{ if(eggs.length < 12) spawnEgg(); }, 1500);
+
+// Resize
+window.addEventListener('resize', ()=>{
+  W = canvas.width = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+  ctx.imageSmoothingEnabled = false;
+});
+
+loop();
+</script>
+</body>
+</html>
